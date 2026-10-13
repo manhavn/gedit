@@ -23,6 +23,7 @@ const APP_ID: &str = "com.geditrust.Gedit";
 struct DocEntry {
     doc: Rc<RefCell<Document>>,
     label: gtk::Label,
+    dot: gtk::Label,
 }
 
 struct Win {
@@ -256,7 +257,6 @@ impl Win {
         );
         win.setup_notebook_signals(&goto_spin, &goto_button, &goto_popover);
         win.setup_language_combo();
-        win.setup_close_request();
 
         // The search bar grabs typing while open; keep it above the notebook.
         win.search.bar.set_key_capture_widget(Some(&win.notebook));
@@ -437,28 +437,6 @@ impl Win {
         });
     }
 
-    fn setup_close_request(self: &Rc<Self>) {
-        let win = self.clone();
-        self.window.connect_close_request(move |_| {
-            let win2 = win.clone();
-            glib::spawn_future_local(async move {
-                let mut proceed = true;
-                let docs: Vec<_> =
-                    win2.docs.borrow().iter().map(|e| e.doc.clone()).collect();
-                for doc in docs {
-                    if !win2.confirm_save(&doc).await {
-                        proceed = false;
-                        break;
-                    }
-                }
-                if proceed {
-                    win2.window.destroy();
-                }
-            });
-            glib::Propagation::Stop
-        });
-    }
-
     // --- Document management -------------------------------------------
 
     fn current_page(&self) -> Option<usize> {
@@ -527,16 +505,16 @@ impl Win {
         tab_box.append(&close);
 
         // Unsaved-changes dot, centered on the tab's bottom edge. Driven by
-        // opacity (not visibility) so the tab keeps a constant size.
+        // opacity (not visibility) so the tab keeps a constant size. The
+        // bullet is scaled down to ~6px: full-size ● reads as a marker
+        // light, a plain • renders down to ~3px and is nearly invisible.
         let dot = gtk::Label::new(Some("●"));
+        let dot_attrs = gtk::pango::AttrList::new();
+        dot_attrs.insert(gtk::pango::AttrFloat::new_scale(0.55));
+        dot.set_attributes(Some(&dot_attrs));
         dot.set_halign(gtk::Align::Center);
         dot.set_valign(gtk::Align::End);
         dot.set_tooltip_text(Some("Unsaved changes"));
-        dot.set_opacity(if doc.borrow().buffer.is_modified() {
-            1.0
-        } else {
-            0.0
-        });
         let tab = gtk::Overlay::new();
         tab.set_child(Some(&tab_box));
         tab.add_overlay(&dot);
@@ -555,7 +533,10 @@ impl Win {
         self.docs.borrow_mut().push(DocEntry {
             doc: doc.clone(),
             label: label.clone(),
+            dot: dot.clone(),
         });
+        // Pick up a pre-existing modified state (restored session tabs).
+        self.refresh_modified_ui(&doc);
 
         // Close button (resolve the page at click time: indices shift).
         let win = self.clone();
@@ -568,29 +549,18 @@ impl Win {
         });
 
         // Modified flag -> bold tab label, unsaved dot, window title.
-        // `modified` notifies on both transitions: the first edit sets it,
-        // `Document::mark_saved` clears it — a text `changed` handler would
-        // miss the save side.
+        // GtkTextBuffer emits no notify for its "modified" property (GTK
+        // 4.24, verified with a catch-all notify listener), so text changes
+        // drive the refresh via `changed`; saves call refresh_modified_ui
+        // directly after mark_saved.
         let win_weak = Rc::downgrade(self);
-        let label_weak = label.downgrade();
-        let dot_weak = dot.downgrade();
-        doc.borrow()
-            .buffer
-            .connect_notify_local(Some("modified"), move |buffer, _| {
-                let (Some(win), Some(label), Some(dot)) =
-                    (win_weak.upgrade(), label_weak.upgrade(), dot_weak.upgrade())
-                else {
-                    return;
-                };
-                let modified = buffer.is_modified();
-                if modified {
-                    label.add_css_class("heading");
-                } else {
-                    label.remove_css_class("heading");
-                }
-                dot.set_opacity(if modified { 1.0 } else { 0.0 });
-                win.update_title();
-            });
+        let doc_weak = Rc::downgrade(&doc);
+        doc.borrow().buffer.connect_changed(move |_| {
+            let (Some(win), Some(doc)) = (win_weak.upgrade(), doc_weak.upgrade()) else {
+                return;
+            };
+            win.refresh_modified_ui(&doc);
+        });
 
         // Cursor position -> status bar.
         let win_weak = Rc::downgrade(self);
@@ -644,6 +614,24 @@ impl Win {
         }
     }
 
+    /// Sync the tab (bold label, unsaved dot) and the window title with the
+    /// document's modified flag.
+    fn refresh_modified_ui(self: &Rc<Self>, doc: &Rc<RefCell<Document>>) {
+        let modified = doc.borrow().buffer.is_modified();
+        for entry in self.docs.borrow().iter() {
+            if Rc::ptr_eq(&entry.doc, doc) {
+                if modified {
+                    entry.label.add_css_class("heading");
+                } else {
+                    entry.label.remove_css_class("heading");
+                }
+                entry.dot.set_opacity(if modified { 1.0 } else { 0.0 });
+                break;
+            }
+        }
+        self.update_title();
+    }
+
     fn update_title(self: &Rc<Self>) {
         let Some(doc) = self.current_doc() else { return };
         let doc = doc.borrow();
@@ -677,7 +665,7 @@ impl Win {
     /// file isn't writable by the current user ("permission denied"), retry
     /// through the system PolicyKit authentication dialog (`pkexec`).
     async fn save_doc_to(
-        &self,
+        self: &Rc<Self>,
         doc: &Rc<RefCell<Document>>,
         path: &std::path::Path,
     ) -> Result<(), String> {
@@ -685,11 +673,13 @@ impl Win {
         match std::fs::write(path, text.as_bytes()) {
             Ok(()) => {
                 doc.borrow_mut().mark_saved(path);
+                self.refresh_modified_ui(doc);
                 Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 utils::elevated_write(path, &text).await?;
                 doc.borrow_mut().mark_saved(path);
+                self.refresh_modified_ui(doc);
                 Ok(())
             }
             Err(e) => Err(format!("{}: {}", path.display(), e)),

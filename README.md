@@ -10,7 +10,8 @@ A gedit-like text editor for Linux, written in Rust with **GTK4** and **GtkSourc
 - Tab and window titles track the current document (file name, or the
   numbered "Untitled Document N"); hovering a tab shows the document's full path
 - Syntax highlighting with automatic language detection (GtkSourceView)
-- New / Open / Save / Save As, with unsaved-changes prompts on close
+- New / Open / Save / Save As; closing a modified *tab* asks whether to save —
+  closing the whole window doesn't, unsaved tabs survive via the session cache
 - Saving a file the user can't write (e.g. root-owned) retries through the
   system's PolicyKit authentication dialog (`pkexec`); the text is piped over
   stdin, nothing touches the disk before authentication succeeds
