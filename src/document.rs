@@ -9,6 +9,29 @@ use std::rc::Rc;
 
 use crate::prefs::Prefs;
 
+/// Style scheme for the editor under `dark`. GtkSourceView ships themed
+/// pairs (`Yaru`/`Yaru-dark` on Ubuntu); fall back to any installed id that
+/// does/doesn't end in `-dark`, and to `None` (buffer default) if nothing
+/// matches.
+fn style_scheme(dark: bool) -> Option<sourceview::StyleScheme> {
+    let manager = sourceview::StyleSchemeManager::default();
+    let preferred: &[&str] = if dark {
+        &["Yaru-dark", "oblivion"]
+    } else {
+        &["Yaru", "classic"]
+    };
+    preferred
+        .iter()
+        .find_map(|id| manager.scheme(id))
+        .or_else(|| {
+            manager
+                .scheme_ids()
+                .into_iter()
+                .find(|id| id.ends_with("-dark") == dark)
+                .and_then(|id| manager.scheme(&id))
+        })
+}
+
 pub struct Document {
     pub view: sourceview::View,
     pub buffer: sourceview::Buffer,
@@ -33,6 +56,7 @@ impl Document {
         } else {
             gtk::WrapMode::None
         });
+        buffer.set_style_scheme(style_scheme(prefs.dark_mode).as_ref());
         Rc::new(RefCell::new(Self {
             view,
             buffer,
@@ -101,5 +125,7 @@ impl Document {
         } else {
             gtk::WrapMode::None
         });
+        self.buffer
+            .set_style_scheme(style_scheme(prefs.dark_mode).as_ref());
     }
 }

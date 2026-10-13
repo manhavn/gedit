@@ -14,11 +14,13 @@ A gedit-like text editor for Linux, written in Rust with **GTK4** and **GtkSourc
 - Saving a file the user can't write (e.g. root-owned) retries through the
   system's PolicyKit authentication dialog (`pkexec`); the text is piped over
   stdin, nothing touches the disk before authentication succeeds
+- Unsaved-changes dot centered on the bottom edge of each modified tab
 - Undo / Redo
 - Find & replace with match highlighting, match-case and regex toggles (Ctrl+F / Ctrl+H)
 - Go to line (click "Line X, Column Y" in the status bar)
 - Language selector in the status bar
-- Word wrap and dark mode (View menu, persisted)
+- Word wrap and dark mode (View menu or Preferences, persisted); dark mode
+  switches the GTK theme variant and the editor style scheme, live
 - Preferences dialog (line numbers, current-line highlight, auto indent, spaces vs tabs, word wrap, dark mode)
 - Keyboard shortcuts: Ctrl+N/O/S, Ctrl+Shift+S, Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y, Ctrl+F, Ctrl+H, Ctrl+W, Ctrl+Q
 - Single-instance application: launching it again with files opens new tabs in the
@@ -123,8 +125,6 @@ before GTK parses any CSS, fixing the ordering.
 ## Known limitations
 
 - Files must be valid UTF-8 (no charset conversion).
-- The editor uses GtkSourceView's light style scheme regardless of the GTK
-  color scheme.
 
 ## Architecture
 

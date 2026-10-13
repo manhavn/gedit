@@ -73,19 +73,44 @@ impl Prefs {
         let _ = kf.save_to_file(Self::config_file());
     }
 
-    /// Apply the color scheme globally (GTK setting, not per-view).
-    /// `gtk::StyleManager` is not exposed by gtk4-rs 0.11, so set the
-    /// GtkSettings `gtk-interface-color-scheme` enum property directly
-    /// (GTK >= 4.20), falling back to the legacy boolean on older GTK.
+    /// Apply the dark/light preference to the GTK chrome.
+    ///
+    /// `gtk-interface-color-scheme` (GTK >= 4.20) only mirrors the *system*
+    /// preference for CSS media queries — setting it rethemes nothing
+    /// (verified: pixel-identical snapshots with it forced to light; Yaru
+    /// ships no media queries either). What works:
+    ///
+    /// - `gtk-application-prefer-dark-theme` (deprecated in 4.20, still
+    ///   live) selects the theme's `-dark` variant when on;
+    /// - switching `gtk-theme-name` between `<base>` and `<base>-dark` —
+    ///   a system-wide `-dark` name (gnome-settings-daemon pushes
+    ///   `gtk-theme=Yaru-dark` on a dark desktop) must be stripped for
+    ///   light, and an explicit `-dark` name is what dark needs at runtime:
+    ///   flipping only prefer-dark live reloads the base theme's
+    ///   `gtk-dark.css` variant, which leaves the header bar background
+    ///   unpainted (verified via snapshot: transparent to the backdrop),
+    ///   while the `<base>-dark` theme directory loads fully opaque.
     pub fn apply_color_scheme(&self) {
         let Some(settings) = gtk::Settings::default() else { return };
-        let scheme = if self.dark_mode { "dark" } else { "default" };
-        if let Some(pspec) = settings.find_property("gtk-interface-color-scheme") {
-            let Some(class) = glib::EnumClass::with_type(pspec.value_type()) else { return };
-            let Some(value) = class.value_by_nick(scheme) else { return };
-            settings.set_property_from_value("gtk-interface-color-scheme", &value.to_value(&class));
-        } else {
-            settings.set_property("gtk-application-prefer-dark-theme", self.dark_mode);
+        let theme: String = settings.property("gtk-theme-name");
+        let base = theme.strip_suffix("-dark").unwrap_or(&theme).to_string();
+        settings.set_property("gtk-application-prefer-dark-theme", self.dark_mode);
+        if self.dark_mode {
+            // Only switch to a `-dark` name that really exists; otherwise
+            // keep the base and let prefer-dark fall back gracefully.
+            let variant = format!("{base}-dark");
+            if variant != theme && theme_exists(&variant) {
+                settings.set_property("gtk-theme-name", &variant);
+            }
+        } else if base != theme {
+            settings.set_property("gtk-theme-name", &base);
         }
     }
+}
+
+/// Whether `name` ships gtk-4.0 assets under the standard theme dirs.
+fn theme_exists(name: &str) -> bool {
+    std::iter::once(glib::user_data_dir())
+        .chain(glib::system_data_dirs())
+        .any(|dir| dir.join("themes").join(name).join("gtk-4.0").exists())
 }

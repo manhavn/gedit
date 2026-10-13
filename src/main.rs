@@ -30,6 +30,9 @@ struct Win {
     notebook: gtk::Notebook,
     docs: RefCell<Vec<DocEntry>>,
     prefs: Rc<RefCell<Prefs>>,
+    /// View-menu "Dark Mode" toggle; kept as a field so the Preferences
+    /// dialog can keep its state in sync (and vice versa).
+    dark_action: gio::SimpleAction,
     search: Rc<SearchUi>,
     #[allow(deprecated)] // ComboBoxText is deprecated since GTK 4.10 but simplest here.
     lang_combo: gtk::ComboBoxText,
@@ -214,11 +217,18 @@ impl Win {
         window.set_titlebar(Some(&header));
         window.set_child(Some(&vbox));
 
+        let dark_action = gio::SimpleAction::new_stateful(
+            "dark-mode",
+            None,
+            &glib::Variant::from(prefs.borrow().dark_mode),
+        );
+
         let win = Rc::new(Self {
             window,
             notebook,
             docs: RefCell::new(Vec::new()),
             prefs,
+            dark_action,
             search,
             lang_combo,
             pos_label,
@@ -324,21 +334,18 @@ impl Win {
         });
         group.add_action(&wrap_action);
 
-        // Stateful: dark mode
-        let dark_action = gio::SimpleAction::new_stateful(
-            "dark-mode",
-            None,
-            &glib::Variant::from(self.prefs.borrow().dark_mode),
-        );
+        // Stateful: dark mode (created in `Win::new` so Preferences can sync it)
         let win = self.clone();
+        let dark_action = self.dark_action.clone();
         dark_action.connect_activate(move |action, _| {
-            let current = action.state().and_then(|v| v.get::<bool>()).unwrap_or(false);
-            let new_state = !current;
+            let new_state = !win.prefs.borrow().dark_mode;
             action.set_state(&glib::Variant::from(new_state));
-            let mut p = win.prefs.borrow_mut();
-            p.dark_mode = new_state;
-            p.apply_color_scheme();
-            p.save();
+            {
+                let mut p = win.prefs.borrow_mut();
+                p.dark_mode = new_state;
+                p.save();
+            }
+            win.apply_prefs();
         });
         group.add_action(&dark_action);
 
@@ -493,8 +500,23 @@ impl Win {
         tab_box.append(&label);
         tab_box.append(&close);
 
+        // Unsaved-changes dot, centered on the tab's bottom edge. Driven by
+        // opacity (not visibility) so the tab keeps a constant size.
+        let dot = gtk::Label::new(Some("●"));
+        dot.set_halign(gtk::Align::Center);
+        dot.set_valign(gtk::Align::End);
+        dot.set_tooltip_text(Some("Unsaved changes"));
+        dot.set_opacity(if doc.borrow().buffer.is_modified() {
+            1.0
+        } else {
+            0.0
+        });
+        let tab = gtk::Overlay::new();
+        tab.set_child(Some(&tab_box));
+        tab.add_overlay(&dot);
+
         let idx = self.docs.borrow().len();
-        self.notebook.append_page(&doc.borrow().view, Some(&tab_box));
+        self.notebook.append_page(&doc.borrow().view, Some(&tab));
         self.docs.borrow_mut().push(DocEntry {
             doc: doc.clone(),
             label: label.clone(),
@@ -510,24 +532,30 @@ impl Win {
             }
         });
 
-        // Modified flag -> bold tab label + window title.
+        // Modified flag -> bold tab label, unsaved dot, window title.
+        // `modified` notifies on both transitions: the first edit sets it,
+        // `Document::mark_saved` clears it — a text `changed` handler would
+        // miss the save side.
         let win_weak = Rc::downgrade(self);
-        let doc_weak = Rc::downgrade(&doc);
         let label_weak = label.downgrade();
-        doc.borrow().buffer.connect_changed(move |_| {
-            let (Some(win), Some(doc), Some(label)) =
-                (win_weak.upgrade(), doc_weak.upgrade(), label_weak.upgrade())
-            else {
-                return;
-            };
-            let modified = doc.borrow().buffer.is_modified();
-            if modified {
-                label.add_css_class("heading");
-            } else {
-                label.remove_css_class("heading");
-            }
-            win.update_title();
-        });
+        let dot_weak = dot.downgrade();
+        doc.borrow()
+            .buffer
+            .connect_notify_local(Some("modified"), move |buffer, _| {
+                let (Some(win), Some(label), Some(dot)) =
+                    (win_weak.upgrade(), label_weak.upgrade(), dot_weak.upgrade())
+                else {
+                    return;
+                };
+                let modified = buffer.is_modified();
+                if modified {
+                    label.add_css_class("heading");
+                } else {
+                    label.remove_css_class("heading");
+                }
+                dot.set_opacity(if modified { 1.0 } else { 0.0 });
+                win.update_title();
+            });
 
         // Cursor position -> status bar.
         let win_weak = Rc::downgrade(self);
@@ -786,6 +814,16 @@ impl Win {
 
     // --- Preferences / About -------------------------------------------
 
+    /// Push the current preferences to GTK (dark/light) and every open
+    /// document (view options, editor style scheme).
+    fn apply_prefs(self: &Rc<Self>) {
+        let prefs = *self.prefs.borrow();
+        prefs.apply_color_scheme();
+        for entry in self.docs.borrow().iter() {
+            entry.doc.borrow().apply_prefs(&prefs);
+        }
+    }
+
     fn show_preferences(self: &Rc<Self>) {
         let dialog = gtk::Window::builder()
             .transient_for(&self.window)
@@ -827,11 +865,11 @@ impl Win {
                     set(&mut p, active);
                     p.save();
                 }
-                let prefs = *win.prefs.borrow();
-                prefs.apply_color_scheme();
-                for entry in win.docs.borrow().iter() {
-                    entry.doc.borrow().apply_prefs(&prefs);
-                }
+                win.apply_prefs();
+                // Keep the View-menu checkmark truthful for every toggle;
+                // only dark-mode has a mirrored action, others are no-ops.
+                win.dark_action
+                    .set_state(&glib::Variant::from(win.prefs.borrow().dark_mode));
             });
             grid.attach(&check, 0, i as i32, 1, 1);
         }

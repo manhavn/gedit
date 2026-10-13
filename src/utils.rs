@@ -223,8 +223,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("out.txt");
 
-        // Success: the shim forwards to real `tee`, which consumes stdin.
-        write_fake_pkexec(&dir, "#!/bin/sh\nexec tee \"$@\"\n");
+        // Success: the shim plays pkexec (runs its first argument with the
+        // rest as args), so `shift` hands the remaining `-- <path>` to real
+        // `tee`, which consumes stdin.
+        write_fake_pkexec(&dir, "#!/bin/sh\nshift\nexec tee \"$@\"\n");
         let result = with_path_prepend(&dir, || drive(elevated_write(&out, "root content\n")));
         assert_eq!(result, Ok(()));
         assert_eq!(std::fs::read_to_string(&out).unwrap(), "root content\n");
