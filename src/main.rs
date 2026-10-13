@@ -516,7 +516,16 @@ impl Win {
         tab.add_overlay(&dot);
 
         let idx = self.docs.borrow().len();
-        self.notebook.append_page(&doc.borrow().view, Some(&tab));
+        // Page = the view inside a ScrolledWindow. A raw GtkTextView reports
+        // a minimum height equal to its entire buffer, which pinned the
+        // window's minimum height to the file length — impossible to shrink
+        // the window, and nothing ever scrolled.
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_child(Some(&doc.borrow().view));
+        scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        scroll.set_hexpand(true);
+        scroll.set_vexpand(true);
+        self.notebook.append_page(&scroll, Some(&tab));
         self.docs.borrow_mut().push(DocEntry {
             doc: doc.clone(),
             label: label.clone(),
@@ -524,9 +533,9 @@ impl Win {
 
         // Close button (resolve the page at click time: indices shift).
         let win = self.clone();
-        let doc2 = doc.clone();
+        let scroll2 = scroll.clone();
         close.connect_clicked(move |_| {
-            let page = win.notebook.page_num(&doc2.borrow().view);
+            let page = win.notebook.page_num(&scroll2);
             if let Some(page) = page {
                 win.close_tab(page as usize);
             }
