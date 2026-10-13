@@ -70,6 +70,16 @@ fn main() {
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
+    // Record the final tab layout on a clean exit; add/remove already keep
+    // the cache fresh, this captures the active tab.
+    app.connect_shutdown(|_| {
+        WIN.with(|cell| {
+            if let Some(win) = cell.borrow().as_ref() {
+                win.save_session();
+            }
+        });
+    });
+
     app.connect_activate(|app| {
         let win = ensure_window(app);
         win.window.present();
@@ -251,8 +261,11 @@ impl Win {
         // The search bar grabs typing while open; keep it above the notebook.
         win.search.bar.set_key_capture_widget(Some(&win.notebook));
 
-        // Always have one document, like gedit.
-        win.new_document();
+        // Restore the previous run's tabs (Sublime-style session cache);
+        // a fresh session starts with one empty document, like gedit.
+        if !win.restore_session() {
+            win.new_document();
+        }
         win
     }
 
@@ -469,6 +482,19 @@ impl Win {
     }
 
     fn open_path(self: &Rc<Self>, path: PathBuf) {
+        // Canonical, so a command-line file that is also in the session
+        // cache maps onto one tab instead of opening twice.
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let already = self
+            .docs
+            .borrow()
+            .iter()
+            .position(|e| e.doc.borrow().file.as_deref() == Some(path.as_path()));
+        if let Some(idx) = already {
+            self.notebook.set_current_page(Some(idx as u32));
+            self.on_tab_switch(idx);
+            return;
+        }
         let doc = Document::new(&self.prefs.borrow(), "Untitled Document");
         // Read the document's name only after `load_file`, which is what sets
         // `file` — naming before it yields the untitled placeholder instead.
@@ -588,9 +614,10 @@ impl Win {
 
         self.notebook.set_current_page(Some(idx as u32));
         self.on_tab_switch(idx);
+        self.save_session();
     }
 
-    #[allow(deprecated)] // ComboBoxText is deprecated since 4.10.
+    #[allow(deprecated)] // ComboBoxText is deprecated since GTK 4.10.
     fn on_tab_switch(self: &Rc<Self>, idx: usize) {
         let Some(entry) = self.docs.borrow().get(idx).map(|e| e.doc.clone()) else {
             return;
@@ -781,6 +808,92 @@ impl Win {
         let new_idx = idx.min(self.docs.borrow().len() - 1);
         self.notebook.set_current_page(Some(new_idx as u32));
         self.on_tab_switch(new_idx);
+        self.save_session();
+    }
+
+    // --- Session cache ---------------------------------------------------
+
+    /// Persist the open tabs to the per-session cache (Sublime-style) so
+    /// the next launch of this Ubuntu session reopens them. Best-effort: a
+    /// missing or full /tmp must never break adding a tab or quitting.
+    fn save_session(&self) {
+        let file = session_file();
+        if let Some(dir) = file.parent()
+            && std::fs::create_dir_all(dir).is_err()
+        {
+            return;
+        }
+        let kf = glib::KeyFile::new();
+        let docs = self.docs.borrow();
+        let _ = kf.set_integer("session", "count", docs.len() as i32);
+        let _ = kf.set_integer("session", "active", self.current_page().unwrap_or(0) as i32);
+        for (i, entry) in docs.iter().enumerate() {
+            let group = format!("tab-{i}");
+            let doc = entry.doc.borrow();
+            if let Some(p) = &doc.file {
+                let _ = kf.set_string(&group, "path", &p.to_string_lossy());
+            }
+            let _ = kf.set_boolean(&group, "modified", doc.buffer.is_modified());
+            let _ = kf.set_string(&group, "content", &doc.text());
+        }
+        let _ = kf.save_to_file(&file);
+    }
+
+    /// Reopen the tabs recorded by the previous run. Untouched files are
+    /// reloaded from disk (external edits win); modified ones — and files
+    /// that vanished since — come back from the cached copy, flagged
+    /// unsaved. Returns true when at least one tab was restored.
+    fn restore_session(self: &Rc<Self>) -> bool {
+        let kf = glib::KeyFile::new();
+        if kf
+            .load_from_file(session_file(), glib::KeyFileFlags::NONE)
+            .is_err()
+        {
+            return false;
+        }
+        let count = kf.integer("session", "count").unwrap_or(0);
+        let active = kf.integer("session", "active").unwrap_or(0);
+        let mut restored = 0usize;
+        for i in 0..count {
+            let group = format!("tab-{i}");
+            let content = kf
+                .string(&group, "content")
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let modified = kf.boolean(&group, "modified").unwrap_or(false);
+            let path = kf.string(&group, "path").ok().map(PathBuf::from);
+            let doc = match &path {
+                Some(p) => {
+                    let d = Document::new(&self.prefs.borrow(), "Untitled Document");
+                    if !modified && d.borrow_mut().load_file(p).is_ok() {
+                        d
+                    } else {
+                        d.borrow_mut().restore(Some(p), &content, true);
+                        d
+                    }
+                }
+                None => {
+                    let n = {
+                        let mut counter = self.untitled_count.borrow_mut();
+                        *counter += 1;
+                        *counter
+                    };
+                    let d = Document::new(&self.prefs.borrow(), &format!("Untitled Document {n}"));
+                    d.borrow_mut().restore(None, &content, modified);
+                    d
+                }
+            };
+            self.add_doc(doc);
+            restored += 1;
+        }
+        if restored == 0 {
+            return false;
+        }
+        let last = self.docs.borrow().len();
+        let idx = (active as usize).min(last - 1);
+        self.notebook.set_current_page(Some(idx as u32));
+        self.on_tab_switch(idx);
+        true
     }
 
     // --- Goto line ------------------------------------------------------
@@ -1082,6 +1195,19 @@ fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
 
 fn separator() -> gtk::Separator {
     gtk::Separator::new(gtk::Orientation::Vertical)
+}
+
+/// Session cache location: a per-uid directory under /tmp, which the OS
+/// wipes on reboot — the cache never outlives the Ubuntu session that
+/// wrote it.
+fn session_file() -> PathBuf {
+    use std::os::unix::fs::MetadataExt;
+    let uid = std::fs::metadata("/proc/self")
+        .map(|m| m.uid())
+        .unwrap_or(0);
+    std::env::temp_dir()
+        .join(format!("gedit-rs-{uid}"))
+        .join("session.ini")
 }
 
 fn add_action<F>(group: &gio::SimpleActionGroup, name: &str, f: F)

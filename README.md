@@ -25,6 +25,9 @@ A gedit-like text editor for Linux, written in Rust with **GTK4** and **GtkSourc
 - Keyboard shortcuts: Ctrl+N/O/S, Ctrl+Shift+S, Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y, Ctrl+F, Ctrl+H, Ctrl+W, Ctrl+Q
 - Single-instance application: launching it again with files opens new tabs in the
   running window; files can also be passed on the command line
+- Sublime-style session restore: tabs (including unsaved edits) reopen on the
+  next launch. The cache lives in `/tmp/gedit-rs-<uid>/session.ini`, which the
+  OS wipes on reboot — it never outlives the Ubuntu session that wrote it
 
 ## Building
 

@@ -32,6 +32,13 @@ fn style_scheme(dark: bool) -> Option<sourceview::StyleScheme> {
         })
 }
 
+/// Guess and apply the syntax language for `path` on `buffer`.
+fn guess_language(buffer: &sourceview::Buffer, path: &Path) {
+    let manager = sourceview::LanguageManager::default();
+    let lang = manager.guess_language(Some(path), None);
+    buffer.set_language(lang.as_ref());
+}
+
 pub struct Document {
     pub view: sourceview::View,
     pub buffer: sourceview::Buffer,
@@ -93,10 +100,20 @@ impl Document {
         self.buffer.set_text(&text);
         self.file = Some(path.to_path_buf());
         self.buffer.set_modified(false);
-        let manager = sourceview::LanguageManager::default();
-        let lang = manager.guess_language(Some(path), None);
-        self.buffer.set_language(lang.as_ref());
+        guess_language(&self.buffer, path);
         Ok(())
+    }
+
+    /// Rebuild the document from the session cache. `text` is the cached
+    /// buffer contents — the on-disk copy may be stale (unsaved edits) or
+    /// gone (file deleted while the cache existed).
+    pub fn restore(&mut self, path: Option<&Path>, text: &str, modified: bool) {
+        self.buffer.set_text(text);
+        self.file = path.map(Path::to_path_buf);
+        if let Some(p) = path {
+            guess_language(&self.buffer, p);
+        }
+        self.buffer.set_modified(modified);
     }
 
     /// Buffer contents as plain text.
