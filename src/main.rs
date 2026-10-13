@@ -305,9 +305,9 @@ impl Win {
             }
         });
         let win = self.clone();
-        add_action(&group, "find", move |_| win.search.open(false));
+        add_action(&group, "find", move |_| win.search.toggle(false));
         let win = self.clone();
-        add_action(&group, "replace", move |_| win.search.open(true));
+        add_action(&group, "replace", move |_| win.search.toggle(true));
         let win = self.clone();
         add_action(&group, "close-tab", move |_| win.close_current_tab());
 
@@ -384,7 +384,7 @@ impl Win {
         bind_button(btn_undo, &group, "undo");
         bind_button(btn_redo, &group, "redo");
         let win = self.clone();
-        btn_search.connect_clicked(move |_| win.search.open(true));
+        btn_search.connect_clicked(move |_| win.search.toggle(true));
     }
 
     fn setup_notebook_signals(

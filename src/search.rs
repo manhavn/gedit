@@ -64,6 +64,10 @@ impl SearchUi {
 
         let bar = gtk::SearchBar::new();
         bar.set_child(Some(&vbox));
+        // Without this the bar never learns which entry is its own, and the
+        // entry's Escape keybinding (stop-search) has no listener — the bar
+        // could not be dismissed from the search box.
+        bar.connect_entry(&entry);
         // GtkSearchBar keeps its child laid out even with search mode off,
         // leaving a transparent band between the header bar and the tabs.
         // Drive the bar's visibility from search-mode-enabled directly.
@@ -142,9 +146,30 @@ impl SearchUi {
         }
     }
 
+    /// Show the bar (optionally with the replace row), or hide it when it is
+    /// already showing: Ctrl+F, Ctrl+H and the toolbar button all toggle.
+    /// Ctrl+H on a find-only bar reveals the replace row instead of closing.
+    pub fn toggle(&self, with_replace: bool) {
+        if !self.bar.is_search_mode() {
+            self.open(with_replace);
+        } else if with_replace && !self.replace_row.is_visible() {
+            self.replace_row.set_visible(true);
+        } else {
+            self.close();
+        }
+    }
+
+    /// Hide the bar and hand focus back to the editor.
+    pub fn close(&self) {
+        self.bar.set_search_mode(false);
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.grab_focus();
+        }
+    }
+
     /// Show the bar; optionally with the replace row. Prefills the entry
     /// from the current selection, like gedit.
-    pub fn open(&self, with_replace: bool) {
+    fn open(&self, with_replace: bool) {
         self.bar.set_search_mode(true);
         self.replace_row.set_visible(with_replace);
         if self.entry.text().is_empty() {
