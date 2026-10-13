@@ -43,11 +43,21 @@ pub fn ask(
     }));
     let state2 = state.clone();
     dialog.connect_response(move |d, response| {
-        state2.borrow_mut().response = Some(response);
-        if let Some(w) = state2.borrow_mut().waker.take() {
-            w.wake();
+        // Only the first response counts, and the dialog is destroyed
+        // rather than closed: `close()` triggers a second
+        // response(DeleteEvent) from within this handler, which overwrote
+        // the recorded button choice before the awaiting task resumed —
+        // every save/discard prompt then read as "cancelled" and closing
+        // never proceeded. destroy() emits no close-request.
+        let mut st = state2.borrow_mut();
+        if st.response.is_none() {
+            st.response = Some(response);
+            if let Some(w) = st.waker.take() {
+                w.wake();
+            }
         }
-        d.close();
+        drop(st);
+        d.destroy();
     });
     dialog.present();
     DialogFuture { state }
