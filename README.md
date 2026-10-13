@@ -22,9 +22,36 @@ A gedit-like text editor for Linux, written in Rust with **GTK4** and **GtkSourc
 ## Building
 
 ```sh
+source env.sh                     # wires up .sysroot shims if needed
 cargo build --release
 ./target/release/gedit-rs [FILE...]
 ```
+
+### Packaging for distribution
+
+`build-packages.sh` builds release binaries for **amd64** and **aarch64**
+and packages them into `dist/`:
+
+```sh
+./build-packages.sh              # setup + build + package
+./build-packages.sh setup        # toolchains / foreign-arch sysroots only
+./build-packages.sh build        # native + cross binaries
+./build-packages.sh package      # dist/ artifacts from built binaries
+```
+
+| Artifact | Target | Installs on |
+|----------|--------|-------------|
+| `gedit-rs_<v>_amd64.deb` | x86_64 | Debian, Ubuntu, Mint… |
+| `gedit-rs_<v>_arm64.deb` | aarch64 | Debian, Ubuntu, Mint… (ARM boards) |
+| `gedit-rs-<v>-1.x86_64.rpm` | x86_64 | Fedora, openSUSE, RHEL… |
+| `gedit-rs-<v>-1.aarch64.rpm` | aarch64 | Fedora, openSUSE, RHEL… (ARM) |
+| `gedit-rs-<v>-linux-{amd64,arm64}.tar.gz` | both | any distro (`./install.sh`) |
+
+`.deb`/`.rpm` are produced with [nfpm](https://nfpm.goreleaser.com)
+(downloaded automatically into `.sysroot/bin/`), and both declare runtime
+dependencies on GTK4 + GtkSourceView 5. The cross build uses
+`rustup target add aarch64-unknown-linux-gnu`, Zig as the cross linker, and
+an arm64 sysroot fetched from the Ubuntu ports mirror (no root required).
 
 ### System dependencies
 
@@ -58,12 +85,38 @@ If you install the real packages via sudo, delete `.sysroot/` and the
 Preferences are stored in `$XDG_CONFIG_HOME/gedit-rs.ini`
 (`~/.config/gedit-rs.ini`).
 
+## Debugging: chrome snapshot
+
+The GNOME Wayland session blocks external screenshot tools
+(`org.gnome.Shell.Screenshot` returns `AccessDenied`), so the app can render
+its own window chrome to a PNG for visual verification:
+
+```sh
+./target/debug/gedit-rs --chrome-snapshot /tmp/chrome.png
+```
+
+It draws the header bar plus the window body (tab strip, editor, status bar)
+onto a magenta backdrop and exits. Widgets that paint no background of their
+own (plain Boxes) show magenta — on screen they inherit the window
+background, which a child-only snapshot cannot capture.
+
+## Theme workaround: registering `gtk.gresource`
+
+This system's Yaru GTK4 theme stores its CSS inside `gtk.gresource`, with
+`gtk.css`/`gtk-dark.css` on disk being only `@import url("resource://…")`
+wrappers. GTK loads `gtk-dark.css` first under a dark preference but only
+registers the gresource as a side effect of loading `gtk.css` — so every
+`resource://` import fails ("resource … does not exist"), the theme rules
+never apply, and the header bar / tab strip / status bar render fully
+transparent (you see the desktop behind them). `register_theme_gresource()`
+in `src/main.rs` registers the active theme's `gtk.gresource` with GLib
+before GTK parses any CSS, fixing the ordering.
+
 ## Known limitations
 
 - Files must be valid UTF-8 (no charset conversion).
-- Screenshot automation is blocked by the GNOME Wayland session
-  (`org.gnome.Shell.Screenshot` returns `AccessDenied`), so UI verification is
-  done via clean startup logs and D-Bus single-instance checks.
+- The editor uses GtkSourceView's light style scheme regardless of the GTK
+  color scheme.
 
 ## Architecture
 

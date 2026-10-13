@@ -39,16 +39,50 @@ struct Win {
 
 thread_local! {
     static WIN: RefCell<Option<Rc<Win>>> = const { RefCell::new(None) };
+    static SNAPSHOT_PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
 fn main() {
+    // Must run before GTK resolves any theme CSS (see fn docs).
+    register_theme_gresource();
+
+    // `--chrome-snapshot <file.png>`: render the window chrome (header bar +
+    // content + status bar) to a PNG and exit. Used for visual verification
+    // since external screenshot tools are blocked by this Wayland session.
+    let raw_args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = Vec::with_capacity(raw_args.len());
+    let mut i = 0;
+    while i < raw_args.len() {
+        if raw_args[i] == "--chrome-snapshot" && i + 1 < raw_args.len() {
+            SNAPSHOT_PATH.with(|p| *p.borrow_mut() = Some(PathBuf::from(&raw_args[i + 1])));
+            i += 2;
+        } else {
+            args.push(raw_args[i].clone());
+            i += 1;
+        }
+    }
+
     let app = gtk::Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
     app.connect_activate(|app| {
-        ensure_window(app).window.present();
+        let win = ensure_window(app);
+        win.window.present();
+        if let Some(path) = SNAPSHOT_PATH.with(|p| p.borrow().clone()) {
+            glib::spawn_future_local(async move {
+                // Let the theme and layout settle first.
+                glib::timeout_future(std::time::Duration::from_millis(500)).await;
+                match render_chrome(&win.window, &path) {
+                    Ok(()) => std::process::exit(0),
+                    Err(e) => {
+                        eprintln!("chrome-snapshot failed: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            });
+        }
     });
 
     app.connect_open(|app, files, _| {
@@ -61,7 +95,6 @@ fn main() {
         win.window.present();
     });
 
-    let args: Vec<String> = std::env::args().collect();
     app.run_with_args(&args);
 }
 
@@ -828,6 +861,126 @@ fn build_menu() -> gio::Menu {
 fn cursor_iter(buffer: &sourceview::Buffer) -> gtk::TextIter {
     let offset = buffer.property::<i32>("cursor-position");
     buffer.iter_at_offset(offset)
+}
+
+/// Register the active GTK theme's `gtk.gresource` with the GLib resource
+/// registry.
+///
+/// Yaru ships its GTK4 CSS inside `gtk.gresource` and the theme's
+/// `gtk.css`/`gtk-dark.css` files are only `@import url("resource://…")`
+/// wrappers. GTK loads `gtk-dark.css` first under a dark preference but only
+/// registers the gresource as a side effect of loading `gtk.css` — so every
+/// `resource://` import fails ("resource … does not exist"), the theme rules
+/// never apply, and the header bar / tab strip / status bar render fully
+/// transparent (visible desktop behind them). Registering up front fixes the
+/// ordering. glib-rs ships no binding for this, hence `gio::ffi`.
+///
+/// The leaked `GResource` handle is intentional: the process-global
+/// registry keeps a raw pointer that must stay valid for the app's life.
+fn register_theme_gresource() {
+    let theme = gio::SettingsSchemaSource::default()
+        .and_then(|source| source.lookup("org.gnome.desktop.interface", true))
+        .map(|schema| {
+            let settings =
+                gio::Settings::new_full(&schema, None::<&gio::SettingsBackend>, None);
+            settings.string("gtk-theme").to_string()
+        })
+        .unwrap_or_else(|| "Yaru".to_string());
+
+    let mut dirs: Vec<std::path::PathBuf> = vec![glib::user_data_dir().join("themes")];
+    if let Some(xdg) = std::env::var_os("XDG_DATA_DIRS") {
+        dirs.extend(std::env::split_paths(&xdg).map(|d| d.join("themes")));
+    }
+    dirs.push(std::path::PathBuf::from("/usr/share/themes"));
+
+    let Some(path) = dirs
+        .iter()
+        .map(|d| d.join(&theme).join("gtk-4.0").join("gtk.gresource"))
+        .find(|p| p.exists())
+    else {
+        return;
+    };
+
+    let Ok(data) = std::fs::read(&path) else {
+        eprintln!("theme-gresource: cannot read {}", path.display());
+        return;
+    };
+    use glib::translate::ToGlibPtr;
+    let bytes = glib::Bytes::from_owned(data);
+    unsafe {
+        let mut error: *mut glib::ffi::GError = std::ptr::null_mut();
+        let data_ptr = ToGlibPtr::<*const glib::ffi::GBytes>::to_glib_none(&bytes).0;
+        let resource =
+            gio::ffi::g_resource_new_from_data(data_ptr as *mut glib::ffi::GBytes, &mut error);
+        if resource.is_null() {
+            if !error.is_null() {
+                glib::ffi::g_error_free(error);
+            }
+            eprintln!("theme-gresource: parse failed for {}", path.display());
+            return;
+        }
+        gio::ffi::g_resources_register(resource);
+        // `resource` (a raw pointer) is deliberately never unreferenced: the
+        // registry must be able to use it for the process lifetime.
+        // Keep the backing bytes alive for the same reason.
+        std::mem::forget(bytes);
+    }
+}
+
+/// Render header bar + window body (incl. status bar) stacked into one PNG.
+fn render_chrome(window: &gtk::ApplicationWindow, path: &std::path::Path) -> Result<(), String> {
+    let width = window.width();
+    let header = window.titlebar().ok_or("window has no titlebar")?;
+    let body = window.child().ok_or("window has no child")?;
+    let header_h = header.height().max(1);
+    let body_h = body.height().max(1);
+    let total_h = header_h + body_h;
+
+    eprintln!("chrome-snapshot: {width}x{total_h} (header={header_h} body={body_h})");
+    {
+        let mut child = body.first_child();
+        while let Some(c) = child {
+            eprintln!(
+                "  body child: {} {}x{}",
+                c.type_().name(),
+                c.width(),
+                c.height()
+            );
+            child = c.next_sibling();
+        }
+    }
+
+    let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, width, total_h)
+        .map_err(|e| e.to_string())?;
+    let cr = cairo::Context::new(&surface).map_err(|e| e.to_string())?;
+
+    // Magenta backdrop: parts of the chrome (plain Boxes, etc.) paint no
+    // background of their own and inherit the window background, which a
+    // child-only snapshot cannot capture — so magenta here is expected for
+    // those, while any *themed* widget showing magenta would indicate a
+    // theme problem.
+    cr.set_source_rgb(1.0, 0.0, 1.0);
+    cr.paint().map_err(|e| e.to_string())?;
+
+    let snap = gtk::Snapshot::new();
+    window.snapshot_child(&header, &snap);
+    if let Some(node) = snap.to_node() {
+        node.draw(&cr);
+    }
+
+    // NOTE: `snapshot_child` already positions each child at its allocation
+    // offset within the parent, so no manual translation is needed.
+    let snap = gtk::Snapshot::new();
+    window.snapshot_child(&body, &snap);
+    if let Some(node) = snap.to_node() {
+        node.draw(&cr);
+    }
+
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    surface
+        .write_to_png(&mut std::io::BufWriter::new(file))
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=gedit-rs
+GenericName=Text Editor
+Comment=Edit text files
+Exec=gedit-rs %F
+Icon=com.geditrust.Gedit
+Terminal=false
+StartupNotify=true
+Categories=Utility;TextEditor;
+MimeType=text/plain;
+Keywords=Text;Editor;Plain;GTK;

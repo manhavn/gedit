@@ -64,6 +64,14 @@ impl SearchUi {
 
         let bar = gtk::SearchBar::new();
         bar.set_child(Some(&vbox));
+        // GtkSearchBar keeps its child laid out even with search mode off,
+        // leaving a transparent band between the header bar and the tabs.
+        // Drive the bar's visibility from search-mode-enabled directly.
+        bar.set_visible(false);
+        bar.connect_notify_local(Some("search-mode-enabled"), |bar, _| {
+            let enabled = bar.property::<bool>("search-mode-enabled");
+            bar.set_visible(enabled);
+        });
 
         let ui = Rc::new(Self {
             bar,

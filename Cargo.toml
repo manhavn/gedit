@@ -7,6 +7,9 @@ description = "A gedit-like text editor for Linux, written in Rust with GTK4 + G
 [dependencies]
 gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
 sourceview = { version = "0.11", package = "sourceview5", features = ["v5_16", "gtk_v4_14"] }
+# Used by --chrome-snapshot to render the header/footer to a PNG (this
+# session's Wayland compositor blocks external screenshot tools).
+cairo-rs = { version = "0.22", features = ["png"] }
 
 [profile.dev]
 # GTK apps link against many shared libraries; keep compile times sane.

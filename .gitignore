@@ -1,3 +1,5 @@
 /target
+# Build artifacts (see build-packages.sh)
+/dist/
 # Local GTK dev-package sysroot (see README "System dependencies")
 /.sysroot/
