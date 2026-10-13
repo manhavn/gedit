@@ -10,6 +10,7 @@ sourceview = { version = "0.11", package = "sourceview5", features = ["v5_16", "
 # Used by --chrome-snapshot to render the header/footer to a PNG (this
 # session's Wayland compositor blocks external screenshot tools).
 cairo-rs = { version = "0.22", features = ["png"] }
+parking_lot = "0.12"
 
 [profile.dev]
 # GTK apps link against many shared libraries; keep compile times sane.

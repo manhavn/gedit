@@ -75,22 +75,19 @@ impl Document {
         Ok(())
     }
 
-    /// Write buffer contents to `path` and remember it as this document's file.
-    pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
+    /// Buffer contents as plain text.
+    pub fn text(&self) -> String {
         let (start, end) = self.buffer.bounds();
-        let text = self.buffer.text(&start, &end, true);
-        std::fs::write(path, text.as_bytes()).map_err(|e| format!("{}: {}", path.display(), e))?;
-        self.file = Some(path.to_path_buf());
-        self.buffer.set_modified(false);
-        Ok(())
+        self.buffer.text(&start, &end, true).to_string()
     }
 
-    /// Save to the existing path; fails if the document was never saved.
-    pub fn save(&mut self) -> Result<(), String> {
-        match self.file.clone() {
-            Some(p) => self.save_to(&p),
-            None => Err("document has no file".to_string()),
-        }
+    /// Bind the document to `path` and clear the modified flag. Call after
+    /// the buffer contents have been written to `path` — writing is the
+    /// caller's job because it may need elevated privileges
+    /// (`Win::save_doc_to`).
+    pub fn mark_saved(&mut self, path: &Path) {
+        self.file = Some(path.to_path_buf());
+        self.buffer.set_modified(false);
     }
 
     pub fn apply_prefs(&self, prefs: &Prefs) {

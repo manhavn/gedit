@@ -597,16 +597,38 @@ impl Win {
     /// Ensure the document has a path (asking Save As if needed); returns
     /// false when the user cancelled.
     async fn ensure_saved(self: &Rc<Self>, doc: &Rc<RefCell<Document>>) -> bool {
-        if doc.borrow().file.is_some() {
-            match doc.borrow_mut().save() {
-                Ok(()) => true,
-                Err(e) => {
-                    utils::show_error(&self.window, &e);
-                    false
-                }
+        let Some(path) = doc.borrow().file.clone() else {
+            return self.save_as_flow(doc).await;
+        };
+        match self.save_doc_to(doc, &path).await {
+            Ok(()) => true,
+            Err(e) => {
+                utils::show_error(&self.window, &e);
+                false
             }
-        } else {
-            self.save_as_flow(doc).await
+        }
+    }
+
+    /// Write the document's text to `path` and remember the path. When the
+    /// file isn't writable by the current user ("permission denied"), retry
+    /// through the system PolicyKit authentication dialog (`pkexec`).
+    async fn save_doc_to(
+        &self,
+        doc: &Rc<RefCell<Document>>,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
+        let text = doc.borrow().text();
+        match std::fs::write(path, text.as_bytes()) {
+            Ok(()) => {
+                doc.borrow_mut().mark_saved(path);
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                utils::elevated_write(path, &text).await?;
+                doc.borrow_mut().mark_saved(path);
+                Ok(())
+            }
+            Err(e) => Err(format!("{}: {}", path.display(), e)),
         }
     }
 
@@ -619,7 +641,7 @@ impl Win {
         match dialog.save_future(Some(&self.window)).await {
             Ok(file) => {
                 if let Some(path) = file.path() {
-                    match doc.borrow_mut().save_to(&path) {
+                    match self.save_doc_to(doc, &path).await {
                         Ok(()) => {
                             self.refresh_label(doc);
                             true

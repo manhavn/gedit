@@ -11,6 +11,9 @@ A gedit-like text editor for Linux, written in Rust with **GTK4** and **GtkSourc
   numbered "Untitled Document N"); hovering a tab shows the document's full path
 - Syntax highlighting with automatic language detection (GtkSourceView)
 - New / Open / Save / Save As, with unsaved-changes prompts on close
+- Saving a file the user can't write (e.g. root-owned) retries through the
+  system's PolicyKit authentication dialog (`pkexec`); the text is piped over
+  stdin, nothing touches the disk before authentication succeeds
 - Undo / Redo
 - Find & replace with match highlighting, match-case and regex toggles (Ctrl+F / Ctrl+H)
 - Go to line (click "Line X, Column Y" in the status bar)
@@ -128,7 +131,7 @@ before GTK parses any CSS, fixing the ordering.
 | File | Role |
 |------|------|
 | `src/main.rs` | Window, header bar, notebook tabs, actions/accels, status bar, dialogs |
-| `src/document.rs` | `Document`: SourceView + SourceBuffer + backing path, load/save |
+| `src/document.rs` | `Document`: SourceView + SourceBuffer + backing path, load, text access |
 | `src/search.rs` | Find/replace bar backed by `GtkSourceSearchContext` |
 | `src/prefs.rs` | Preferences + `GKeyFile` persistence + color scheme |
-| `src/utils.rs` | Awaitable message dialogs |
+| `src/utils.rs` | Awaitable message dialogs + elevated (`pkexec`) writes |
