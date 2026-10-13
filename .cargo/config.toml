@@ -1,0 +1,10 @@
+# This machine has no system C compiler (cc/gcc). Linking needs a C driver to
+# supply crt startup files (_start) and PT_INTERP; bare ld/rust-lld produces
+# binaries with entry point 0x0 that segfault at exec. The wrapper at
+# .sysroot/bin/cc delegates to `zig cc` (zig bundles its own glibc startfiles).
+[target.x86_64-unknown-linux-gnu]
+linker = "/desktop/gedit/.sysroot/bin/cc"
+
+[env]
+# Resolve gtk4/gtksourceview-5 via the locally-extracted sysroot (see README).
+PKG_CONFIG = "/desktop/gedit/.sysroot/bin/pkg-config"

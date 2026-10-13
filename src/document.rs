@@ -1,0 +1,102 @@
+//! One open text file: a `GtkSourceView` editor bound to a `GtkSourceBuffer`,
+//! plus its backing path (if any).
+
+use gtk::prelude::*;
+use sourceview::prelude::*;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use crate::prefs::Prefs;
+
+pub struct Document {
+    pub view: sourceview::View,
+    pub buffer: sourceview::Buffer,
+    pub file: Option<PathBuf>,
+}
+
+impl Document {
+    pub fn new(prefs: &Prefs) -> Rc<RefCell<Self>> {
+        let buffer = sourceview::Buffer::new(None::<&gtk::TextTagTable>);
+        let view = sourceview::View::with_buffer(&buffer);
+        view.set_monospace(true);
+        view.set_show_line_numbers(prefs.line_numbers);
+        view.set_highlight_current_line(prefs.highlight_current_line);
+        view.set_auto_indent(prefs.auto_indent);
+        view.set_insert_spaces_instead_of_tabs(prefs.insert_spaces);
+        view.set_tab_width(4);
+        view.set_wrap_mode(if prefs.word_wrap {
+            gtk::WrapMode::Word
+        } else {
+            gtk::WrapMode::None
+        });
+        Rc::new(RefCell::new(Self {
+            view,
+            buffer,
+            file: None,
+        }))
+    }
+
+    /// Basename of the file, or "Untitled Document" like gedit.
+    pub fn display_name(&self) -> String {
+        match &self.file {
+            Some(p) => p
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.to_string_lossy().into_owned()),
+            None => "Untitled Document".to_string(),
+        }
+    }
+
+    pub fn full_name(&self) -> String {
+        match &self.file {
+            Some(p) => p.to_string_lossy().into_owned(),
+            None => "Untitled Document".to_string(),
+        }
+    }
+
+    /// Read `path` into the buffer, guess the syntax language, clear modified.
+    pub fn load_file(&mut self, path: &Path) -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+        let text =
+            String::from_utf8(bytes).map_err(|_| format!("{} is not valid UTF-8", path.display()))?;
+        self.buffer.set_text(&text);
+        self.file = Some(path.to_path_buf());
+        self.buffer.set_modified(false);
+        let manager = sourceview::LanguageManager::default();
+        let lang = manager.guess_language(Some(path), None);
+        self.buffer.set_language(lang.as_ref());
+        Ok(())
+    }
+
+    /// Write buffer contents to `path` and remember it as this document's file.
+    pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
+        let (start, end) = self.buffer.bounds();
+        let text = self.buffer.text(&start, &end, true);
+        std::fs::write(path, text.as_bytes()).map_err(|e| format!("{}: {}", path.display(), e))?;
+        self.file = Some(path.to_path_buf());
+        self.buffer.set_modified(false);
+        Ok(())
+    }
+
+    /// Save to the existing path; fails if the document was never saved.
+    pub fn save(&mut self) -> Result<(), String> {
+        match self.file.clone() {
+            Some(p) => self.save_to(&p),
+            None => Err("document has no file".to_string()),
+        }
+    }
+
+    pub fn apply_prefs(&self, prefs: &Prefs) {
+        self.view.set_show_line_numbers(prefs.line_numbers);
+        self.view
+            .set_highlight_current_line(prefs.highlight_current_line);
+        self.view.set_auto_indent(prefs.auto_indent);
+        self.view.set_insert_spaces_instead_of_tabs(prefs.insert_spaces);
+        self.view.set_wrap_mode(if prefs.word_wrap {
+            gtk::WrapMode::Word
+        } else {
+            gtk::WrapMode::None
+        });
+    }
+}

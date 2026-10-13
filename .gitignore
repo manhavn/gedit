@@ -1,0 +1,3 @@
+/target
+# Local GTK dev-package sysroot (see README "System dependencies")
+/.sysroot/

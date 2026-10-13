@@ -1,0 +1,17 @@
+[package]
+name = "gedit-rs"
+version = "0.1.0"
+edition = "2024"
+description = "A gedit-like text editor for Linux, written in Rust with GTK4 + GtkSourceView"
+
+[dependencies]
+gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
+sourceview = { version = "0.11", package = "sourceview5", features = ["v5_16", "gtk_v4_14"] }
+
+[profile.dev]
+# GTK apps link against many shared libraries; keep compile times sane.
+opt-level = 0
+
+[profile.release]
+opt-level = 2
+lto = "thin"
