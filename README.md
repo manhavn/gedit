@@ -7,6 +7,8 @@ A gedit-like text editor for Linux, written in Rust with **GTK4** and **GtkSourc
 ## Features
 
 - Tabbed documents (one window, close button per tab)
+- Tab and window titles track the current document (file name, or the
+  numbered "Untitled Document N"); hovering a tab shows the document's full path
 - Syntax highlighting with automatic language detection (GtkSourceView)
 - New / Open / Save / Save As, with unsaved-changes prompts on close
 - Undo / Redo
@@ -93,12 +95,15 @@ its own window chrome to a PNG for visual verification:
 
 ```sh
 ./target/debug/gedit-rs --chrome-snapshot /tmp/chrome.png
+./target/debug/gedit-rs FILE… --chrome-snapshot /tmp/chrome.png   # with files open
 ```
 
 It draws the header bar plus the window body (tab strip, editor, status bar)
 onto a magenta backdrop and exits. Widgets that paint no background of their
 own (plain Boxes) show magenta — on screen they inherit the window
-background, which a child-only snapshot cannot capture.
+background, which a child-only snapshot cannot capture. The snapshot fires on
+both `activate` (no arguments) and `open` (file arguments), so document/tab
+text can be checked with real files.
 
 ## Theme workaround: registering `gtk.gresource`
 

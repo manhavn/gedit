@@ -13,10 +13,13 @@ pub struct Document {
     pub view: sourceview::View,
     pub buffer: sourceview::Buffer,
     pub file: Option<PathBuf>,
+    /// Name shown while there is no file yet, e.g. "Untitled Document 1".
+    /// Assigned by the caller so numbered tabs stay distinguishable.
+    untitled_name: String,
 }
 
 impl Document {
-    pub fn new(prefs: &Prefs) -> Rc<RefCell<Self>> {
+    pub fn new(prefs: &Prefs, untitled_name: &str) -> Rc<RefCell<Self>> {
         let buffer = sourceview::Buffer::new(None::<&gtk::TextTagTable>);
         let view = sourceview::View::with_buffer(&buffer);
         view.set_monospace(true);
@@ -34,24 +37,27 @@ impl Document {
             view,
             buffer,
             file: None,
+            untitled_name: untitled_name.to_string(),
         }))
     }
 
-    /// Basename of the file, or "Untitled Document" like gedit.
+    /// Basename of the file, or the untitled name ("Untitled Document N").
+    /// Read only after `load_file`, once `file` is set.
     pub fn display_name(&self) -> String {
         match &self.file {
             Some(p) => p
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| p.to_string_lossy().into_owned()),
-            None => "Untitled Document".to_string(),
+            None => self.untitled_name.clone(),
         }
     }
 
+    /// Absolute path, or the untitled name when the document was never saved.
     pub fn full_name(&self) -> String {
         match &self.file {
             Some(p) => p.to_string_lossy().into_owned(),
-            None => "Untitled Document".to_string(),
+            None => self.untitled_name.clone(),
         }
     }
 

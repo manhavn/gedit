@@ -70,19 +70,7 @@ fn main() {
     app.connect_activate(|app| {
         let win = ensure_window(app);
         win.window.present();
-        if let Some(path) = SNAPSHOT_PATH.with(|p| p.borrow().clone()) {
-            glib::spawn_future_local(async move {
-                // Let the theme and layout settle first.
-                glib::timeout_future(std::time::Duration::from_millis(500)).await;
-                match render_chrome(&win.window, &path) {
-                    Ok(()) => std::process::exit(0),
-                    Err(e) => {
-                        eprintln!("chrome-snapshot failed: {e}");
-                        std::process::exit(1);
-                    }
-                }
-            });
-        }
+        schedule_chrome_snapshot(&win);
     });
 
     app.connect_open(|app, files, _| {
@@ -93,9 +81,31 @@ fn main() {
             }
         }
         win.window.present();
+        schedule_chrome_snapshot(&win);
     });
 
     app.run_with_args(&args);
+}
+
+/// `--chrome-snapshot <file.png>` half of the flag parsed in `main`: render
+/// the window chrome once layout settles, then exit. Shared by `activate`
+/// (no file arguments) and `open` (file arguments), so the flag works either way.
+fn schedule_chrome_snapshot(win: &Rc<Win>) {
+    let Some(path) = SNAPSHOT_PATH.with(|p| p.borrow().clone()) else {
+        return;
+    };
+    let win = win.clone();
+    glib::spawn_future_local(async move {
+        // Let the theme and layout settle first.
+        glib::timeout_future(std::time::Duration::from_millis(500)).await;
+        match render_chrome(&win.window, &path) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("chrome-snapshot failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    });
 }
 
 fn ensure_window(app: &gtk::Application) -> Rc<Win> {
@@ -446,27 +456,34 @@ impl Win {
             *count += 1;
             *count
         };
-        let doc = Document::new(&self.prefs.borrow());
+        let doc = Document::new(&self.prefs.borrow(), &format!("Untitled Document {n}"));
         doc.borrow().buffer.set_modified(false);
-        self.add_doc(doc, &format!("Untitled Document {n}"));
+        self.add_doc(doc);
     }
 
     fn open_path(self: &Rc<Self>, path: PathBuf) {
-        let doc = Document::new(&self.prefs.borrow());
-        let name = doc.borrow().display_name();
+        let doc = Document::new(&self.prefs.borrow(), "Untitled Document");
+        // Read the document's name only after `load_file`, which is what sets
+        // `file` — naming before it yields the untitled placeholder instead.
         let result = doc.borrow_mut().load_file(&path);
         match result {
-            Ok(()) => self.add_doc(doc, &name),
+            Ok(()) => self.add_doc(doc),
             Err(e) => utils::show_error(&self.window, &e),
         }
     }
 
-    fn add_doc(self: &Rc<Self>, doc: Rc<RefCell<Document>>, name: &str) {
-        // Tab label: name + close button.
-        let label = gtk::Label::new(Some(name));
+    fn add_doc(self: &Rc<Self>, doc: Rc<RefCell<Document>>) {
+        // Tab label: file name + close button; hover reveals the full path,
+        // since the label itself is ellipsized.
+        let (display, full) = {
+            let doc = doc.borrow();
+            (doc.display_name(), doc.full_name())
+        };
+        let label = gtk::Label::new(Some(&display));
         label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         label.set_width_chars(12);
         label.set_max_width_chars(24);
+        label.set_tooltip_text(Some(&full));
 
         let close = gtk::Button::from_icon_name("window-close-symbolic");
         close.add_css_class("flat");
@@ -660,13 +677,18 @@ impl Win {
         }
     }
 
+    /// Re-sync the tab label, its hover tooltip, and the window title after
+    /// the document's name changes (Save As assigns the path).
     fn refresh_label(self: &Rc<Self>, doc: &Rc<RefCell<Document>>) {
         for entry in self.docs.borrow().iter() {
             if Rc::ptr_eq(&entry.doc, doc) {
-                entry.label.set_text(&doc.borrow().display_name());
+                let doc = doc.borrow();
+                entry.label.set_text(&doc.display_name());
+                entry.label.set_tooltip_text(Some(&doc.full_name()));
                 break;
             }
         }
+        self.update_title();
     }
 
     // --- Tabs -----------------------------------------------------------
