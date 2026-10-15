@@ -38,6 +38,7 @@ struct Win {
     #[allow(deprecated)] // ComboBoxText is deprecated since GTK 4.10 but simplest here.
     lang_combo: gtk::ComboBoxText,
     pos_label: gtk::Label,
+    statusbar: gtk::Box,
     untitled_count: RefCell<u32>,
 }
 
@@ -193,6 +194,7 @@ impl Win {
         statusbar.set_margin_bottom(2);
         statusbar.set_margin_start(6);
         statusbar.set_margin_end(6);
+        statusbar.set_visible(prefs.borrow().show_bottom_bar);
 
         // --- Header bar --------------------------------------------------
         let header = gtk::HeaderBar::new();
@@ -243,6 +245,7 @@ impl Win {
             search,
             lang_combo,
             pos_label,
+            statusbar,
             untitled_count: RefCell::new(0),
         });
 
@@ -361,6 +364,22 @@ impl Win {
             win.apply_prefs();
         });
         group.add_action(&dark_action);
+
+        let bottom_bar_action = gio::SimpleAction::new_stateful(
+            "bottom-bar",
+            None,
+            &glib::Variant::from(self.prefs.borrow().show_bottom_bar),
+        );
+        let win = self.clone();
+        bottom_bar_action.connect_activate(move |action, _| {
+            let visible = !win.prefs.borrow().show_bottom_bar;
+            action.set_state(&glib::Variant::from(visible));
+            win.statusbar.set_visible(visible);
+            let mut prefs = win.prefs.borrow_mut();
+            prefs.show_bottom_bar = visible;
+            prefs.save();
+        });
+        group.add_action(&bottom_bar_action);
 
         let win = self.clone();
         add_action(&group, "preferences", move |_| win.show_preferences());
@@ -1039,6 +1058,7 @@ fn build_menu() -> gio::Menu {
     let view = gio::Menu::new();
     view.append_item(&gio::MenuItem::new(Some("Word Wrap"), Some("win.word-wrap")));
     view.append_item(&gio::MenuItem::new(Some("Dark Mode"), Some("win.dark-mode")));
+    view.append_item(&gio::MenuItem::new(Some("Bottom Bar"), Some("win.bottom-bar")));
     menu.append_section(None, &view);
 
     let app_menu = gio::Menu::new();

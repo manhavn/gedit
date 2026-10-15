@@ -11,6 +11,7 @@ pub struct Prefs {
     pub insert_spaces: bool,
     pub word_wrap: bool,
     pub dark_mode: bool,
+    pub show_bottom_bar: bool,
 }
 
 impl Default for Prefs {
@@ -22,6 +23,7 @@ impl Default for Prefs {
             insert_spaces: true,
             word_wrap: false,
             dark_mode: false,
+            show_bottom_bar: true,
         }
     }
 }
@@ -58,6 +60,9 @@ impl Prefs {
             if let Ok(v) = kf.boolean(GROUP, "dark-mode") {
                 p.dark_mode = v;
             }
+            if let Ok(v) = kf.boolean(GROUP, "show-bottom-bar") {
+                p.show_bottom_bar = v;
+            }
         }
         p
     }
@@ -70,6 +75,7 @@ impl Prefs {
         let _ = kf.set_boolean(GROUP, "insert-spaces", self.insert_spaces);
         let _ = kf.set_boolean(GROUP, "word-wrap", self.word_wrap);
         let _ = kf.set_boolean(GROUP, "dark-mode", self.dark_mode);
+        let _ = kf.set_boolean(GROUP, "show-bottom-bar", self.show_bottom_bar);
         let _ = kf.save_to_file(Self::config_file());
     }
 

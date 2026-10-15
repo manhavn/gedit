@@ -22,6 +22,7 @@ A gedit-like text editor for Linux, written in Rust with **GTK4** and **GtkSourc
 - Language selector in the status bar
 - Word wrap and dark mode (View menu or Preferences, persisted); dark mode
   switches the GTK theme variant and the editor style scheme, live
+- Bottom Bar toggle in the menu, with visibility persisted across launches
 - Preferences dialog (line numbers, current-line highlight, auto indent, spaces vs tabs, word wrap, dark mode)
 - Keyboard shortcuts: Ctrl+N/O/S, Ctrl+Shift+S, Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y, Ctrl+F, Ctrl+H, Ctrl+W, Ctrl+Q
 - Single-instance application: launching it again with files opens new tabs in the
